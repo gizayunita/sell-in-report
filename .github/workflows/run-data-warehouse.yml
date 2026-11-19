@@ -19,42 +19,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          credentials_json: ${{ secrets.KEY_SA }}
+          python-version: "3.11"
 
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: datawarehouse-490008
-
-      - name: Verify BigQuery access
+      - name: Install BigQuery client
         run: |
-          bq show --project_id=datawarehouse-490008
+          python -m pip install --upgrade pip
+          python -m pip install google-cloud-bigquery google-auth
 
-      - name: Run SQL models in numbered order
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          shopt -s nullglob
-          sql_files=(data_warehouse/[0-9][0-9]_*.sql)
-
-          if [ ${#sql_files[@]} -eq 0 ]; then
-            echo "No numbered SQL files found in data_warehouse/."
-            exit 1
-          fi
-
-          for sql_file in "${sql_files[@]}"; do
-            echo "::group::Running ${sql_file}"
-            bq query \
-              --project_id=datawarehouse-490008 \
-              --use_legacy_sql=false \
-              --location=asia-southeast2 \
-              < "${sql_file}"
-            echo "Completed: ${sql_file}"
-            echo "::endgroup::"
-          done
-
-          echo "All ${#sql_files[@]} SQL models completed successfully."
+      - name: Authenticate and run SQL models
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          GCP_PROJECT_ID: datawarehouse-490008
+          BIGQUERY_LOCATION: asia-southeast2
+        run: python data_warehouse/run_sql.py
