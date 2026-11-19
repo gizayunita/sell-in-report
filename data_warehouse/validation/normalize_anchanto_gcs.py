@@ -49,6 +49,8 @@ def header_to_field(value):
         "dispatch_date": "dispatch_date",
         "discount_value": "discount_value",
     }
+    if key.startswith("delivery_date") or key.startswith("estimated_delivery_date"):
+        return "delivery_date"
     return aliases.get(key)
 
 
