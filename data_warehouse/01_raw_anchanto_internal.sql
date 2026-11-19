@@ -27,12 +27,11 @@ SELECT
         order_packing_date
     ) AS order_packing_date,
 
-    -- DELIVERY DATE
-    DATE(
-        SAFE.PARSE_DATETIME(
-            '%d/%m/%Y, %H:%M:%S',
-            delivery_date
-        )
+    -- DELIVERY DATE: normalized upstream to DD/MM/YYYY, HH:MM:SS.
+    -- Date-only source values are represented as 00:00:00.
+    SAFE.PARSE_DATETIME(
+        '%d/%m/%Y, %H:%M:%S',
+        NULLIF(TRIM(delivery_date), '')
     ) AS delivery_date,
 
     SAFE.PARSE_DATETIME(
