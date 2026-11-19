@@ -35,10 +35,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install BigQuery client
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install google-cloud-bigquery
+          python -m pip install google-cloud-bigquery google-cloud-storage
+
+      - name: Validate Anchanto CSV files in GCS
+        run: |
+          python data_warehouse/validation/validate_anchanto.py \
+            --gcs-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/"
 
       - name: Run SQL models
         env:
