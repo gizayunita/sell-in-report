@@ -92,10 +92,19 @@ def main() -> int:
         client = storage.Client(project=PROJECT_ID)
         logging.info("Validating CSV headers in gs://%s/%s", BUCKET_NAME, PREFIX)
 
+        excluded_path_markers = (
+            "/_backup_before_header_fix/",
+            "/_tmp_header_fix/",
+        )
+
         csv_blobs = (
             blob
             for blob in client.list_blobs(BUCKET_NAME, prefix=PREFIX)
-            if not blob.name.endswith("/") and blob.name.lower().endswith(".csv")
+            if (
+                not blob.name.endswith("/")
+                and blob.name.lower().endswith(".csv")
+                and not any(marker in blob.name for marker in excluded_path_markers)
+            )
         )
 
         total = passed = failed = empty = errors = 0
