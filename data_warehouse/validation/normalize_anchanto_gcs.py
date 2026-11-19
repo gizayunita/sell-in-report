@@ -19,33 +19,32 @@ def parse_gcs_uri(uri):
     return bucket, prefix
 
 
-def normalize_file(source_blob, backup_bucket, backup_prefix):
+def ensure_backup_and_restore(source_blob, backup_bucket, backup_prefix):
     backup_name = backup_prefix.rstrip("/") + "/" + Path(source_blob.name).name
     backup_blob = backup_bucket.blob(backup_name)
 
-    # Always use the untouched backup as the source on reruns. This also
-    # restores files changed by the previously stopped broad normalizer.
     if not backup_blob.exists():
         backup_bucket.copy_blob(source_blob, backup_bucket, backup_name)
         print(f"BACKUP CREATED: gs://{backup_bucket.name}/{backup_name}")
     else:
-        print(f"BACKUP EXISTS: using original copy gs://{backup_bucket.name}/{backup_name}")
+        print(f"BACKUP EXISTS: gs://{backup_bucket.name}/{backup_name}")
 
-    temp_name = source_blob.name + ".header_fix.tmp"
-    temp_blob = backup_bucket.blob(temp_name)
+    # Restore the untouched original before applying the one-header correction.
+    backup_bucket.copy_blob(backup_blob, source_blob.bucket, source_blob.name)
+    print(f"ORIGINAL RESTORED: gs://{source_blob.bucket.name}/{source_blob.name}")
+
+
+def rename_estimated_delivery_header(source_blob, backup_bucket):
+    temp_blob = backup_bucket.blob(source_blob.name + ".header_fix.tmp")
     changed = False
 
     try:
-        with backup_blob.open("rt", encoding="utf-8-sig", newline="") as source:
+        with source_blob.open("rt", encoding="utf-8-sig", newline="") as source:
             first_line = source.readline()
             if not first_line:
                 raise ValueError(f"CSV is empty: {source_blob.name}")
 
-            try:
-                headers = next(csv.reader([first_line]))
-            except (csv.Error, StopIteration) as exc:
-                raise ValueError(f"Cannot parse CSV header in {source_blob.name}: {exc}")
-
+            headers = next(csv.reader([first_line]))
             updated_headers = []
             for header in headers:
                 normalized = " ".join((header or "").replace("\ufeff", "").strip().lower().split())
@@ -59,15 +58,12 @@ def normalize_file(source_blob, backup_bucket, backup_prefix):
                 " ".join((h or "").strip().lower().split()).startswith("delivery date")
                 for h in headers
             ) and not changed:
-                raise ValueError(
-                    f"No Delivery Date or Estimated Delivery Date header found in {source_blob.name}: {headers}"
-                )
+                raise ValueError(f"No Delivery Date header found in {source_blob.name}: {headers}")
 
             header_buffer = io.StringIO(newline="")
             csv.writer(header_buffer, lineterminator="\n").writerow(updated_headers)
             with temp_blob.open("wt", encoding="utf-8", newline="", ignore_flush=True) as target:
                 target.write(header_buffer.getvalue())
-                # Preserve every data row exactly as it exists in the original backup.
                 while True:
                     chunk = source.read(8 * 1024 * 1024)
                     if not chunk:
@@ -76,10 +72,7 @@ def normalize_file(source_blob, backup_bucket, backup_prefix):
 
         backup_bucket.copy_blob(temp_blob, source_blob.bucket, source_blob.name)
         temp_blob.delete()
-        print(
-            f"HEADER {'UPDATED' if changed else 'UNCHANGED'}: "
-            f"gs://{source_blob.bucket.name}/{source_blob.name}"
-        )
+        print(f"HEADER {'RENAMED' if changed else 'ALREADY STANDARD'}: {source_blob.name}")
         print(f"HEADERS: {updated_headers}")
     except Exception:
         try:
@@ -91,7 +84,7 @@ def normalize_file(source_blob, backup_bucket, backup_prefix):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Change only Estimated Delivery Date header to Delivery Date; preserve all other headers and data."
+        description="Restore original Anchanto CSVs, then rename only Estimated Delivery Date header."
     )
     parser.add_argument("--source-uri", default=DEFAULT_SOURCE)
     parser.add_argument("--backup-uri", default=DEFAULT_BACKUP)
@@ -114,13 +107,18 @@ def main():
         raise RuntimeError(f"No CSV files found at {args.source_uri}")
 
     print(f"CSV files found: {len(blobs)}")
-    print("Only Estimated Delivery Date header will be renamed.")
-    print("All other headers, column order, and data rows will be preserved.")
+    print("PHASE 1: back up and restore ALL original CSV files before changing any header.")
     for blob in blobs:
-        print(f"\nSOURCE: gs://{source_bucket.name}/{blob.name}")
-        normalize_file(blob, backup_bucket, backup_prefix)
+        ensure_backup_and_restore(blob, backup_bucket, backup_prefix)
+
+    print("\nPHASE 2: rename ONLY Estimated Delivery Date header.")
+    for blob in blobs:
+        current_blob = source_bucket.blob(blob.name)
+        rename_estimated_delivery_header(current_blob, backup_bucket)
 
     print("\nHEADER FIX COMPLETE")
+    print("All original files were restored first; only Estimated Delivery Date headers were changed.")
+    print("All other headers, column order, and data rows were preserved.")
 
 
 if __name__ == "__main__":
