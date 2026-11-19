@@ -44,7 +44,7 @@ jobs:
         run: |
           python data_warehouse/validation/normalize_anchanto_gcs.py \
             --source-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/" \
-            --output-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms_normalized/"
+            --backup-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/_backup_before_header_fix/"
 
       - name: Run SQL models
         env:
