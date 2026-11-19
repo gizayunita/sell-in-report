@@ -121,7 +121,7 @@ def normalize_file(source_blob, output_bucket, output_prefix):
             print(f"Source column count: {len(source_headers)}")
             print(f"Canonical column count: {len(CANONICAL_FIELDS)}")
 
-            with output_blob.open("wt", encoding="utf-8", newline="") as target:
+            with output_blob.open("wt", encoding="utf-8", newline="", ignore_flush=True) as target:
                 writer = csv.writer(target)
                 writer.writerow(CANONICAL_FIELDS)
 
