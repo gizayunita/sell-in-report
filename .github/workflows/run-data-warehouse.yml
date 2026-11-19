@@ -27,11 +27,11 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: dwh-learning-project
+          project_id: datawarehouse-490008
 
       - name: Verify BigQuery access
         run: |
-          bq show --project_id=dwh-learning-project
+          bq show --project_id=datawarehouse-490008
 
       - name: Run SQL models in numbered order
         shell: bash
@@ -49,7 +49,7 @@ jobs:
           for sql_file in "${sql_files[@]}"; do
             echo "::group::Running ${sql_file}"
             bq query \
-              --project_id=dwh-learning-project \
+              --project_id=datawarehouse-490008 \
               --use_legacy_sql=false \
               --location=asia-southeast2 \
               < "${sql_file}"
