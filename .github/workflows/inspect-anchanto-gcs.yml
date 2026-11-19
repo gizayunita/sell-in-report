@@ -1,0 +1,49 @@
+name: Inspect Anchanto GCS CSV
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inspect-anchanto-gcs
+  cancel-in-progress: false
+
+jobs:
+  inspect-anchanto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GCP credentials
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$GCP_CREDENTIALS_JSON" ]; then
+            echo "GitHub Secret GCP_CREDENTIALS_JSON is empty or missing."
+            exit 1
+          fi
+          printf '%s' "$GCP_CREDENTIALS_JSON" > "$RUNNER_TEMP/gcp-credentials.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-credentials.json" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install GCS client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install google-cloud-storage
+
+      - name: Inspect Anchanto CSV files
+        run: |
+          python data_warehouse/validation/inspect_anchanto_gcs.py \
+            --gcs-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/"
+
+      - name: Confirm inspection only
+        run: echo "Inspection finished. No BigQuery SQL models were executed."
