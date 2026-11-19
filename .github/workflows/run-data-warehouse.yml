@@ -40,10 +40,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install google-cloud-bigquery google-cloud-storage
 
-      - name: Validate Anchanto CSV files in GCS
+      - name: Normalize Anchanto CSV files in GCS
         run: |
-          python data_warehouse/validation/validate_anchanto.py \
-            --gcs-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/"
+          python data_warehouse/validation/normalize_anchanto_gcs.py \
+            --source-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/" \
+            --output-uri "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms_normalized/"
 
       - name: Run SQL models
         env:
