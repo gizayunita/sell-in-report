@@ -75,14 +75,30 @@ def inspect_file(blob):
 
                 lower_name = name.lower()
                 if "date" in lower_name or lower_name.endswith("_on"):
-                    date_examples.setdefault(name, {"valid": 0, "invalid": 0, "examples": []})
+                    date_examples.setdefault(
+                        name,
+                        {"valid_datetime": 0, "valid_date_only": 0, "invalid": 0,
+                         "examples": [], "normalized_examples": []}
+                    )
+                    parsed = None
                     try:
-                        datetime.strptime(value, DATETIME_FORMAT)
-                        date_examples[name]["valid"] += 1
+                        parsed = datetime.strptime(value, DATETIME_FORMAT)
+                        date_examples[name]["valid_datetime"] += 1
                     except ValueError:
-                        date_examples[name]["invalid"] += 1
-                        if len(date_examples[name]["examples"]) < 3:
-                            date_examples[name]["examples"].append(value[:100])
+                        try:
+                            parsed = datetime.strptime(value, "%d/%m/%Y")
+                            date_examples[name]["valid_date_only"] += 1
+                        except ValueError:
+                            date_examples[name]["invalid"] += 1
+                            if len(date_examples[name]["examples"]) < 3:
+                                date_examples[name]["examples"].append(value[:100])
+
+                    if parsed is not None and "delivery" in lower_name:
+                        normalized = parsed.strftime("%Y-%m-%d %H:%M:%S")
+                        if len(date_examples[name]["normalized_examples"]) < 3:
+                            date_examples[name]["normalized_examples"].append(
+                                f"{value!r} -> {normalized}"
+                            )
 
             if row_count >= MAX_INSPECT_ROWS:
                 break
@@ -97,12 +113,17 @@ def inspect_file(blob):
         print(f"  Row {row_number}: {sample}")
 
     if date_examples:
-        print("DATETIME FIELD CHECK (expected format: %d/%m/%Y, %H:%M:%S):")
+        print("DATE FIELD CHECK:")
         for name, result in date_examples.items():
             print(
-                f"  {name}: valid={result['valid']:,}, invalid={result['invalid']:,}, "
-                f"invalid_examples={result['examples']}"
+                f"  {name}: datetime_format_valid={result['valid_datetime']:,}, "
+                f"date_only_valid={result['valid_date_only']:,}, "
+                f"invalid={result['invalid']:,}, invalid_examples={result['examples']}"
             )
+            if "delivery" in name.lower():
+                print("    Delivery Date normalization to DATETIME:")
+                for example in result["normalized_examples"]:
+                    print(f"      {example}")
 
     print("BLANK COUNTS BY COLUMN:")
     for key, value in sorted(counts.items()):
