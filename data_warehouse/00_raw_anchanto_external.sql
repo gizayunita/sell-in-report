@@ -20,7 +20,7 @@ CREATE OR REPLACE EXTERNAL TABLE `sales_raw_som.raw_anchanto` (
 )
 OPTIONS (
     format = 'CSV',
-    uris = ['gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms_normalized/*.csv'],
+    uris = ['gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/*.csv'],
     skip_leading_rows = 1,
     field_delimiter = ',',
     quote = '"',
