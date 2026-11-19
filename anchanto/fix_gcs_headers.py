@@ -2,7 +2,6 @@ import csv
 import logging
 import os
 import sys
-from pathlib import PurePosixPath
 
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud import storage
@@ -10,7 +9,7 @@ from google.cloud import storage
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "dwh-learning-project")
 BUCKET_NAME = "bucket_som"
 PREFIX = "sales_parquet/raw/online/anchanto/scrwms/"
-BACKUP_PREFIX = PREFIX + "_backup_before_header_fix/"
+BACKUP_PREFIX = "sales_parquet/raw/online/anchanto/_backup_before_header_fix/"
 TEMP_PREFIX = PREFIX + "_tmp_header_fix/"
 
 OLD_HEADER = "Estimated Delivery Date (DD/MM/YYYY)"
