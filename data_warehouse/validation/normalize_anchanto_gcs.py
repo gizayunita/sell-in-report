@@ -134,7 +134,11 @@ def normalize_file(source_blob, backup_bucket, backup_prefix):
 
             with output_blob.open("wt", encoding="utf-8", newline="", ignore_flush=True) as target:
                 writer = csv.writer(target)
-                writer.writerow(CANONICAL_FIELDS)
+                output_headers = [
+                    "Delivery Date (DD/MM/YYYY)" if field == "delivery_date" else field
+                    for field in CANONICAL_FIELDS
+                ]
+                writer.writerow(output_headers)
 
                 for row_number, row in enumerate(reader, start=2):
                     if not row or all(not (cell or "").strip() for cell in row):
