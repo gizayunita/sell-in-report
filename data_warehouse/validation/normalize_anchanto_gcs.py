@@ -10,7 +10,7 @@ from google.cloud import storage
 
 PROJECT_ID = "datawarehouse-490008"
 DEFAULT_SOURCE = "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/"
-DEFAULT_OUTPUT = "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms_normalized/"
+DEFAULT_BACKUP = "gs://bucket_som/sales_parquet/raw/online/anchanto/_backup_before_header_fix/"
 SCHEMA_FILE = Path(__file__).with_name("anchanto_validation.csv")
 DELIVERY_FORMATS = ("%d/%m/%Y, %H:%M:%S", "%d/%m/%Y")
 CANONICAL_FIELDS = [
@@ -79,12 +79,21 @@ def normalize_delivery_date(value, file_name, row_number):
     )
 
 
-def normalize_file(source_blob, output_bucket, output_prefix):
+def normalize_file(source_blob, backup_bucket, backup_prefix):
     print("\n" + "=" * 88)
     print(f"SOURCE: gs://{source_blob.bucket.name}/{source_blob.name}", flush=True)
 
-    output_name = output_prefix.rstrip("/") + "/" + Path(source_blob.name).name
-    output_blob = output_bucket.blob(output_name)
+    backup_name = backup_prefix.rstrip("/") + "/" + Path(source_blob.name).name
+    backup_blob = backup_bucket.blob(backup_name)
+    if not backup_blob.exists():
+        backup_bucket.copy_blob(source_blob, backup_bucket, backup_name)
+        print(f"BACKUP CREATED: gs://{backup_bucket.name}/{backup_name}")
+    else:
+        print(f"BACKUP EXISTS, preserving: gs://{backup_bucket.name}/{backup_name}")
+
+    # Write to a temporary object, then replace the source only after validation succeeds.
+    output_name = source_blob.name + ".normalizing.tmp"
+    output_blob = backup_bucket.blob(output_name)
 
     rows_written = 0
     date_only_count = 0
@@ -159,8 +168,10 @@ def normalize_file(source_blob, output_bucket, output_prefix):
         print(f"Delivery Date timestamp values: {timestamp_count:,}")
         print(f"Delivery Date date-only values converted to midnight: {date_only_count:,}")
         print(f"Delivery Date blank values retained: {blank_count:,}")
-        print(f"OUTPUT: gs://{output_bucket.name}/{output_name}", flush=True)
-        return output_name, rows_written
+        backup_bucket.copy_blob(output_blob, source_blob.bucket, source_blob.name)
+        output_blob.delete()
+        print(f"NORMALIZED IN PLACE: gs://{source_blob.bucket.name}/{source_blob.name}", flush=True)
+        return source_blob.name, rows_written
     except Exception:
         # Never leave a partial normalized CSV that the external table could read.
         try:
@@ -175,22 +186,21 @@ def main():
         description="Normalize Anchanto CSV headers and Delivery Date values for BigQuery external tables."
     )
     parser.add_argument("--source-uri", default=DEFAULT_SOURCE)
-    parser.add_argument("--output-uri", default=DEFAULT_OUTPUT)
+    parser.add_argument("--backup-uri", default=DEFAULT_BACKUP)
     args = parser.parse_args()
 
     source_bucket_name, source_prefix = parse_gcs_uri(args.source_uri)
-    output_bucket_name, output_prefix = parse_gcs_uri(args.output_uri)
-    if source_bucket_name != output_bucket_name:
-        raise ValueError("Source and output must be in the same GCS bucket for this workflow.")
+    backup_bucket_name, backup_prefix = parse_gcs_uri(args.backup_uri)
+    if source_bucket_name != backup_bucket_name:
+        raise ValueError("Source and backup must be in the same GCS bucket for this workflow.")
 
     client = storage.Client(project=PROJECT_ID)
     source_bucket = client.bucket(source_bucket_name)
-    output_bucket = client.bucket(output_bucket_name)
+    backup_bucket = client.bucket(backup_bucket_name)
 
     source_blobs = [
         blob for blob in client.list_blobs(source_bucket_name, prefix=source_prefix)
         if blob.name.lower().endswith(".csv")
-        and not blob.name.startswith(output_prefix)
     ]
     source_blobs.sort(key=lambda blob: blob.name)
 
@@ -200,14 +210,14 @@ def main():
     print("=" * 88)
     print("ANCHANTO CSV NORMALIZATION")
     print(f"Source: {args.source_uri}")
-    print(f"Normalized output: {args.output_uri}")
+    print(f"Backup: {args.backup_uri}")
     print(f"Files found: {len(source_blobs)}")
-    print("Original Anchanto CSV files will not be modified.")
+    print("Original CSVs will be copied to backup before each file is normalized in place.")
     print("=" * 88)
 
     total_rows = 0
     for blob in source_blobs:
-        _, rows = normalize_file(blob, output_bucket, output_prefix)
+        _, rows = normalize_file(blob, backup_bucket, backup_prefix)
         total_rows += rows
 
     print("\n" + "=" * 88)
@@ -215,7 +225,7 @@ def main():
     print(f"TOTAL ROWS NORMALIZED: {total_rows:,}")
     print("DELIVERY DATE: canonical DATETIME text format (DD/MM/YYYY, HH:MM:SS)")
     print("DATE-ONLY VALUES: converted to 00:00:00")
-    print("NORMALIZATION COMPLETE")
+    print("NORMALIZATION COMPLETE: normalized CSVs remain in scrwms/")
     print("=" * 88)
 
 
