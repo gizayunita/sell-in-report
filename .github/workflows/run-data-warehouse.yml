@@ -51,6 +51,7 @@ jobs:
             bq query \
               --project_id=dwh-learning-project \
               --use_legacy_sql=false \
+              --location=asia-southeast2 \
               < "${sql_file}"
             echo "Completed: ${sql_file}"
             echo "::endgroup::"
