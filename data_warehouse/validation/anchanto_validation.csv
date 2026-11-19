@@ -1,6 +1,6 @@
 field_name,data_type,nullable,date_format
 marketplace,STRING,false,
-order_date,DATETIME,false,%d/%m/%Y, %H:%M:%S
+order_date,DATETIME,false,"%d/%m/%Y, %H:%M:%S"
 order_number,STRING,false,
 item_upc,STRING,true,
 item_name,STRING,false,
@@ -9,9 +9,9 @@ order_status,STRING,false,
 customer_name,STRING,true,
 shipping_city,STRING,true,
 shipping_postcode,STRING,true,
-order_packing_date,DATETIME,true,%d/%m/%Y, %H:%M:%S
-delivery_date,DATETIME,true,%d/%m/%Y, %H:%M:%S
-dispatch_scheduled_date,DATETIME,true,%d/%m/%Y, %H:%M:%S
+order_packing_date,DATETIME,true,"%d/%m/%Y, %H:%M:%S"
+delivery_date,DATETIME,true,"%d/%m/%Y, %H:%M:%S"
+dispatch_scheduled_date,DATETIME,true,"%d/%m/%Y, %H:%M:%S"
 unit_price,FLOAT64,true,
-dispatch_date,DATETIME,true,%d/%m/%Y, %H:%M:%S
+dispatch_date,DATETIME,true,"%d/%m/%Y, %H:%M:%S"
 discount_value,FLOAT64,true,
