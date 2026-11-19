@@ -1,0 +1,51 @@
+name: Anchanto Header Validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "anchanto/**"
+      - ".github/workflows/anchanto-header-validation.yml"
+
+jobs:
+  validate-anchanto-headers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r anchanto/requirements.txt
+
+      - name: Configure Google ADC credentials
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          credentials = os.environ.get("GCP_CREDENTIALS_JSON")
+          if not credentials:
+              raise SystemExit("GitHub Secret GCP_CREDENTIALS_JSON is missing.")
+
+          credentials_path = Path.home() / "gcp-adc.json"
+          credentials_path.write_text(credentials, encoding="utf-8")
+          os.chmod(credentials_path, 0o600)
+
+          github_env = os.environ["GITHUB_ENV"]
+          with open(github_env, "a", encoding="utf-8") as env_file:
+              env_file.write(f"GOOGLE_APPLICATION_CREDENTIALS={credentials_path}\n")
+              env_file.write("GOOGLE_CLOUD_PROJECT=dwh-learning-project\n")
+          PY
+
+      - name: Validate Anchanto CSV headers
+        run: python anchanto/main.py
