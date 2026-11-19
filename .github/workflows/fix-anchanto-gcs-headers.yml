@@ -1,0 +1,49 @@
+name: Fix Anchanto GCS Delivery Date Headers
+
+on:
+  push:
+    paths:
+      - "anchanto/fix_gcs_headers.py"
+      - ".github/workflows/fix-anchanto-gcs-headers.yml"
+  workflow_dispatch:
+
+jobs:
+  fix-gcs-headers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r anchanto/requirements.txt
+
+      - name: Configure Google ADC credentials
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          credentials = os.environ.get("GCP_CREDENTIALS_JSON")
+          if not credentials:
+              raise SystemExit("GitHub Secret GCP_CREDENTIALS_JSON is missing.")
+
+          credentials_path = Path.home() / "gcp-adc.json"
+          credentials_path.write_text(credentials, encoding="utf-8")
+          os.chmod(credentials_path, 0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"GOOGLE_APPLICATION_CREDENTIALS={credentials_path}\\n")
+              env_file.write("GOOGLE_CLOUD_PROJECT=dwh-learning-project\\n")
+          PY
+
+      - name: Back up and fix the three CSV headers in GCS
+        run: python anchanto/fix_gcs_headers.py
