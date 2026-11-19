@@ -123,7 +123,8 @@ def main():
     if not bucket_name:
         raise ValueError("Missing GCS bucket name")
 
-    client = storage.Client()
+    # Explicit project is required because the GitHub secret uses end-user ADC credentials.
+    client = storage.Client(project="datawarehouse-490008")
     bucket = client.bucket(bucket_name)
 
     if object_name.lower().endswith(".csv"):
