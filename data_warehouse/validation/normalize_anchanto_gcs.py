@@ -1,6 +1,6 @@
 import argparse
 import csv
-import io
+import re
 from pathlib import Path
 
 from google.cloud import storage
@@ -8,6 +8,47 @@ from google.cloud import storage
 PROJECT_ID = "datawarehouse-490008"
 DEFAULT_SOURCE = "gs://bucket_som/sales_parquet/raw/online/anchanto/scrwms/"
 DEFAULT_BACKUP = "gs://bucket_som/sales_parquet/raw/online/anchanto/_backup_before_header_fix/"
+
+# BigQuery external table reads CSV fields by position. Every source export
+# must therefore be written in this one canonical order.
+CANONICAL_FIELDS = [
+    "marketplace", "order_date", "order_number", "item_upc", "item_name",
+    "ordered_quantity", "order_status", "customer_name", "shipping_city",
+    "shipping_postcode", "order_packing_date", "delivery_date",
+    "dispatch_scheduled_date", "unit_price", "dispatch_date", "discount_value",
+]
+DELIVERY_HEADER = "Delivery Date (DD/MM/YYYY)"
+
+
+def normalize_header(value):
+    value = (value or "").replace("\ufeff", "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
+
+
+def header_to_field(value):
+    key = normalize_header(value)
+    aliases = {
+        "marketplace": "marketplace",
+        "order_date": "order_date",
+        "order_number": "order_number",
+        "item_upc": "item_upc",
+        "item_name": "item_name",
+        "ordered_quantity": "ordered_quantity",
+        "order_status": "order_status",
+        "customer_name": "customer_name",
+        "shipping_city": "shipping_city",
+        "shipping_postcode": "shipping_postcode",
+        "order_packing_date": "order_packing_date",
+        "delivery_date": "delivery_date",
+        "delivery_date_dd_mm_yyyy": "delivery_date",
+        "estimated_delivery_date": "delivery_date",
+        "estimated_delivery_date_dd_mm_yyyy": "delivery_date",
+        "dispatch_scheduled_date": "dispatch_scheduled_date",
+        "unit_price": "unit_price",
+        "dispatch_date": "dispatch_date",
+        "discount_value": "discount_value",
+    }
+    return aliases.get(key)
 
 
 def parse_gcs_uri(uri):
@@ -19,61 +60,93 @@ def parse_gcs_uri(uri):
     return bucket, prefix
 
 
-def ensure_backup_and_restore(source_blob, backup_bucket, backup_prefix):
+def backup_and_restore_all(blobs, backup_bucket, backup_prefix):
+    print("\nPHASE 1: create/preserve backups and restore ALL originals.")
+    for blob in blobs:
+        backup_name = backup_prefix.rstrip("/") + "/" + Path(blob.name).name
+        backup_blob = backup_bucket.blob(backup_name)
+        if not backup_blob.exists():
+            backup_bucket.copy_blob(blob, backup_bucket, backup_name)
+            print(f"BACKUP CREATED: gs://{backup_bucket.name}/{backup_name}")
+        else:
+            print(f"BACKUP EXISTS: gs://{backup_bucket.name}/{backup_name}")
+            backup_bucket.copy_blob(backup_blob, blob.bucket, blob.name)
+            print(f"ORIGINAL RESTORED: gs://{blob.bucket.name}/{blob.name}")
+
+
+def normalize_one_file(source_blob, backup_bucket, backup_prefix):
+    # Read the immutable backup, not a previously normalized source object.
     backup_name = backup_prefix.rstrip("/") + "/" + Path(source_blob.name).name
     backup_blob = backup_bucket.blob(backup_name)
-
     if not backup_blob.exists():
-        backup_bucket.copy_blob(source_blob, backup_bucket, backup_name)
-        print(f"BACKUP CREATED: gs://{backup_bucket.name}/{backup_name}")
-    else:
-        print(f"BACKUP EXISTS: gs://{backup_bucket.name}/{backup_name}")
+        raise RuntimeError(f"Missing original backup: gs://{backup_bucket.name}/{backup_name}")
 
-    # Restore the untouched original before applying the one-header correction.
-    backup_bucket.copy_blob(backup_blob, source_blob.bucket, source_blob.name)
-    print(f"ORIGINAL RESTORED: gs://{source_blob.bucket.name}/{source_blob.name}")
-
-
-def rename_estimated_delivery_header(source_blob, backup_bucket):
-    temp_blob = backup_bucket.blob(source_blob.name + ".header_fix.tmp")
-    changed = False
+    temp_name = backup_prefix.rstrip("/") + "/_tmp/" + Path(source_blob.name).name + ".tmp"
+    temp_blob = backup_bucket.blob(temp_name)
+    row_count = 0
 
     try:
-        with source_blob.open("rt", encoding="utf-8-sig", newline="") as source:
-            first_line = source.readline()
-            if not first_line:
+        with backup_blob.open("rt", encoding="utf-8-sig", newline="") as source:
+            reader = csv.reader(source)
+            try:
+                source_headers = next(reader)
+            except StopIteration:
                 raise ValueError(f"CSV is empty: {source_blob.name}")
 
-            headers = next(csv.reader([first_line]))
-            updated_headers = []
-            for header in headers:
-                normalized = " ".join((header or "").replace("\ufeff", "").strip().lower().split())
-                if normalized.startswith("estimated delivery date"):
-                    updated_headers.append("Delivery Date (DD/MM/YYYY)")
-                    changed = True
-                else:
-                    updated_headers.append(header)
+            field_indexes = {}
+            original_headers = {}
+            for index, header in enumerate(source_headers):
+                field = header_to_field(header)
+                if field is None:
+                    raise ValueError(
+                        f"Unrecognized header {header!r} in {source_blob.name}. "
+                        "Refusing to drop or misplace a column."
+                    )
+                if field in field_indexes:
+                    raise ValueError(
+                        f"Duplicate mapping for {field!r} in {source_blob.name}"
+                    )
+                field_indexes[field] = index
+                original_headers[field] = header
 
-            if not any(
-                " ".join((h or "").strip().lower().split()).startswith("delivery date")
-                for h in headers
-            ) and not changed:
-                raise ValueError(f"No Delivery Date header found in {source_blob.name}: {headers}")
+            missing = [field for field in CANONICAL_FIELDS if field not in field_indexes]
+            extra = [field for field in field_indexes if field not in CANONICAL_FIELDS]
+            if missing or extra or len(source_headers) != len(CANONICAL_FIELDS):
+                raise ValueError(
+                    f"Schema mismatch in {source_blob.name}; missing={missing}, extra={extra}, "
+                    f"source_headers={source_headers}"
+                )
 
-            header_buffer = io.StringIO(newline="")
-            csv.writer(header_buffer, lineterminator="\n").writerow(updated_headers)
+            output_headers = [
+                DELIVERY_HEADER if field == "delivery_date" else original_headers[field]
+                for field in CANONICAL_FIELDS
+            ]
+
             with temp_blob.open("wt", encoding="utf-8", newline="", ignore_flush=True) as target:
-                target.write(header_buffer.getvalue())
-                while True:
-                    chunk = source.read(8 * 1024 * 1024)
-                    if not chunk:
-                        break
-                    target.write(chunk)
+                writer = csv.writer(target)
+                writer.writerow(output_headers)
 
+                for row_number, row in enumerate(reader, start=2):
+                    if not row or all(not (cell or "").strip() for cell in row):
+                        continue
+                    if len(row) != len(source_headers):
+                        raise ValueError(
+                            f"{source_blob.name}, row {row_number}: expected "
+                            f"{len(source_headers)} columns, got {len(row)}"
+                        )
+                    writer.writerow([row[field_indexes[field]] for field in CANONICAL_FIELDS])
+                    row_count += 1
+
+        # Replace scrwms object only after the complete temp CSV was written.
         backup_bucket.copy_blob(temp_blob, source_blob.bucket, source_blob.name)
         temp_blob.delete()
-        print(f"HEADER {'RENAMED' if changed else 'ALREADY STANDARD'}: {source_blob.name}")
-        print(f"HEADERS: {updated_headers}")
+
+        source_order = [header_to_field(h) for h in source_headers]
+        print(f"FILE: {source_blob.name}")
+        print(f"SOURCE ORDER: {source_order}")
+        print(f"OUTPUT ORDER: {CANONICAL_FIELDS}")
+        print(f"ROWS REORDERED: {row_count:,}")
+        print(f"OUTPUT HEADER: {output_headers}")
     except Exception:
         try:
             temp_blob.delete()
@@ -84,7 +157,7 @@ def rename_estimated_delivery_header(source_blob, backup_bucket):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Restore original Anchanto CSVs, then rename only Estimated Delivery Date header."
+        description="Restore Anchanto originals, then reorder CSV columns to the BigQuery canonical order."
     )
     parser.add_argument("--source-uri", default=DEFAULT_SOURCE)
     parser.add_argument("--backup-uri", default=DEFAULT_BACKUP)
@@ -107,18 +180,16 @@ def main():
         raise RuntimeError(f"No CSV files found at {args.source_uri}")
 
     print(f"CSV files found: {len(blobs)}")
-    print("PHASE 1: back up and restore ALL original CSV files before changing any header.")
-    for blob in blobs:
-        ensure_backup_and_restore(blob, backup_bucket, backup_prefix)
+    backup_and_restore_all(blobs, backup_bucket, backup_prefix)
 
-    print("\nPHASE 2: rename ONLY Estimated Delivery Date header.")
+    print("\nPHASE 2: map by header and reorder every file to canonical column order.")
     for blob in blobs:
-        current_blob = source_bucket.blob(blob.name)
-        rename_estimated_delivery_header(current_blob, backup_bucket)
+        normalize_one_file(source_bucket.blob(blob.name), backup_bucket, backup_prefix)
 
-    print("\nHEADER FIX COMPLETE")
-    print("All original files were restored first; only Estimated Delivery Date headers were changed.")
-    print("All other headers, column order, and data rows were preserved.")
+    print("\nNORMALIZATION COMPLETE")
+    print("All CSVs now use the canonical 16-column order expected by the BigQuery external table.")
+    print("Only the Delivery Date header is standardized; other header labels are retained.")
+    print("All data values are preserved; blank values remain blank.")
 
 
 if __name__ == "__main__":
